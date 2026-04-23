@@ -31,11 +31,30 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 5s
       timeout: 5s
       retries: 5
     restart: always
+  # agent_git:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.agent
+  #   container_name: agent_git
+  #   ports:
+  #     - "8888:8888"
+  #   environment:
+  #     - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+  #     - LITELLM_BASE_URL=http://litellm:4000/v1
+  #     - MODEL_NAME=${MODEL_NAME:-gemini-1.5-pro}
+  #     - GIT_ORG=${GIT_ORG:-Qoin-Digital-Indonesia}
+  #     - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+  #   volumes:
+  #     - ./data:/app/data
+  #     - ./tools:/app/tools
+  #   depends_on:
+  #     - litellm
+  #   restart: always
 
 volumes:
   postgres_data:

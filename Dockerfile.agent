@@ -1,0 +1,17 @@
+FROM python:3.11-alpine
+
+# Install system dependencies
+RUN apk add --no-cache git github-cli bash curl
+
+WORKDIR /app
+
+# Copy and install python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Create a data directory to store cloned repositories
+RUN mkdir /app/data
+WORKDIR /app/data
+
+# Run API server by default
+CMD ["python", "/app/tools/agent_git.py", "server"]

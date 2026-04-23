@@ -557,6 +557,7 @@ async def run_git_agent(action: str, repo_name: str, org: str, action_kwargs: di
 
     print(f"🤖 Memulai Git Manager AI Agent (LiteLLM Gateway + {MODEL_NAME})...\n")
 
+    final_report = ""
     max_turns = 15
     for turn in range(max_turns):
         response = await client.chat.completions.create(
@@ -573,6 +574,7 @@ async def run_git_agent(action: str, repo_name: str, org: str, action_kwargs: di
         
         if response_message.content:
             print(f"\n{response_message.content}")
+            final_report = response_message.content
             
         if response_message.tool_calls:
             for tool_call in response_message.tool_calls:
@@ -608,12 +610,116 @@ async def run_git_agent(action: str, repo_name: str, org: str, action_kwargs: di
         print(f"   ✅ Repository tersedia di: {os.path.abspath(dest_dir)}")
     else:
         print(f"   ❌ Repository tidak ditemukan (Clone gagal).")
+        
+    return final_report
 
 
 # ============================================================
 # Entry Point
 # ============================================================
+
+def run_server():
+    import uvicorn
+    from fastapi import FastAPI, HTTPException, Body
+    from pydantic import BaseModel, Field
+    from typing import Optional, Dict, Any
+
+    app = FastAPI(
+        title="GitOps AI Agent API",
+        description="API untuk mengelola repository Git secara otonom melalui AI Agent. Memungkinkan aksi `clone`, `create-branch`, `pull-request`, dan `update-image`.",
+        version="1.0.0",
+        docs_url="/docs",
+        redoc_url="/redoc"
+    )
+
+    class AgentRequest(BaseModel):
+        action: str = Field(..., description="Aksi yang ingin dijalankan (clone, create-branch, pull-request, update-image)")
+        repo_name: str = Field(..., description="Nama repository (tanpa nama org)")
+        org: Optional[str] = Field(DEFAULT_ORG, description="Nama organisasi GitHub")
+        action_kwargs: Optional[Dict[str, Any]] = Field(
+            default={}, 
+            description="Parameter ekstra spesifik aksi (misal: ref, yaml_file, new_image, source_branch, dest_branch)"
+        )
+
+    @app.post("/api/run", summary="Run Git Agent", response_description="Mengembalikan laporan akhir dari AI Agent")
+    async def api_run_agent(
+        req: AgentRequest = Body(
+            ...,
+            openapi_examples={
+                "Clone": {
+                    "summary": "1. Clone Repository",
+                    "value": {
+                        "action": "clone",
+                        "repo_name": "gitops-k8s",
+                        "org": "Qoin-Digital-Indonesia",
+                        "action_kwargs": {"ref": "main"}
+                    }
+                },
+                "Create Branch": {
+                    "summary": "2. Create New Branch",
+                    "value": {
+                        "action": "create-branch",
+                        "repo_name": "gitops-k8s",
+                        "org": "Qoin-Digital-Indonesia",
+                        "action_kwargs": {
+                            "existing_branch": "main",
+                            "new_branch": "feature/update-api"
+                        }
+                    }
+                },
+                "Pull Request": {
+                    "summary": "3. Create Pull Request",
+                    "value": {
+                        "action": "pull-request",
+                        "repo_name": "gitops-k8s",
+                        "org": "Qoin-Digital-Indonesia",
+                        "action_kwargs": {
+                            "source_branch": "feature/update-api",
+                            "dest_branch": "main",
+                            "delete_after_merge": True
+                        }
+                    }
+                },
+                "Update Image": {
+                    "summary": "4. Update Image in YAML",
+                    "value": {
+                        "action": "update-image",
+                        "repo_name": "gitops-k8s",
+                        "org": "Qoin-Digital-Indonesia",
+                        "action_kwargs": {
+                            "ref": "main",
+                            "yaml_file": "deployment.yaml",
+                            "new_image": "my-app:v2.0.1"
+                        }
+                    }
+                }
+            }
+        )
+    ):
+        """
+        Endpoint untuk memberikan instruksi ke AI Agent.
+        
+        - **action**: Operasi git yang ingin dilakukan.
+        - **repo_name**: Nama repository target.
+        - **org**: Nama organisasi di GitHub (default menyesuaikan environment).
+        - **action_kwargs**: Argumen dinamis untuk masing-masing aksi.
+        
+        Akan memproses secara otonom (15 max-turns AI thinking) dan mengembalikan response JSON saat agent selesai bertugas.
+        """
+        try:
+            report = await run_git_agent(req.action, req.repo_name, req.org, req.action_kwargs)
+            return {"status": "success", "report": report}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    print("🚀 Starting Web API on port 8888...")
+    print("📚 Swagger UI Docs tersedia di: http://localhost:8888/docs")
+    uvicorn.run(app, host="0.0.0.0", port=8888)
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "server":
+        run_server()
+        return
+
     repo_name = None
     org = DEFAULT_ORG
     action = "clone"
