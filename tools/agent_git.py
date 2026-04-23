@@ -22,6 +22,7 @@ import asyncio
 import subprocess
 import warnings
 import inspect
+import re
 from textwrap import dedent
 
 # Bypass .netrc parsing error
@@ -278,6 +279,116 @@ def run_shell_command(command: str, work_dir: str) -> dict:
         return {"status": "error", "stdout": "", "stderr": str(e)}
 
 
+def git_create_branch(work_dir: str, existing_branch: str, new_branch: str) -> dict:
+    """Creates a new branch from an existing branch and pushes it to remote.
+    
+    Args:
+        work_dir: Path to the git repository directory.
+        existing_branch: Name of the existing branch to base on.
+        new_branch: Name of the new branch to create.
+        
+    Returns:
+        dict: Dictionary with 'status' and 'message'.
+    """
+    try:
+        subprocess.run(["git", "fetch", "origin", existing_branch], cwd=work_dir, capture_output=True)
+        subprocess.run(["git", "checkout", existing_branch], cwd=work_dir, capture_output=True)
+        subprocess.run(["git", "pull", "origin", existing_branch], cwd=work_dir, capture_output=True)
+        res = subprocess.run(["git", "checkout", "-b", new_branch], cwd=work_dir, capture_output=True, text=True)
+        if res.returncode != 0:
+            return {"status": "error", "message": f"Failed to create new branch {new_branch}: {res.stderr}"}
+            
+        res_push = subprocess.run(["git", "push", "-u", "origin", new_branch], cwd=work_dir, capture_output=True, text=True)
+        if res_push.returncode != 0:
+            return {"status": "error", "message": f"Failed to push new branch {new_branch}: {res_push.stderr}"}
+            
+        return {"status": "success", "message": f"Successfully created and pushed branch {new_branch} based on {existing_branch}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def git_create_pull_request(work_dir: str, source_branch: str, dest_branch: str, title: str, body: str) -> dict:
+    """Creates a pull request using GitHub CLI.
+    
+    Args:
+        work_dir: Path to the git repository directory.
+        source_branch: Name of the branch containing the changes.
+        dest_branch: Name of the branch to merge into.
+        title: Title of the pull request.
+        body: Description/body of the pull request.
+        
+    Returns:
+        dict: Dictionary with 'status' and 'message' (with PR URL).
+    """
+    try:
+        cmd = [
+            "gh", "pr", "create", 
+            "--base", dest_branch, 
+            "--head", source_branch, 
+            "--title", title, 
+            "--body", body
+        ]
+        res = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True)
+        if res.returncode != 0:
+            return {"status": "error", "message": f"Failed to create PR: {res.stderr}"}
+            
+        pr_url = res.stdout.strip()
+        return {"status": "success", "message": f"Successfully created Pull Request: {pr_url}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def update_yaml_image(file_path: str, new_image: str) -> dict:
+    """Updates the 'image: ...' line in a YAML file with the new image.
+    
+    Args:
+        file_path: Path to the YAML file.
+        new_image: The new image value.
+    """
+    try:
+        with open(file_path, 'r') as f:
+            lines = f.readlines()
+            
+        updated = False
+        for i, line in enumerate(lines):
+            if re.search(r'^\s*-?\s*image:\s*.*$', line):
+                prefix = line[:line.find('image:')]
+                lines[i] = f"{prefix}image: {new_image}\n"
+                updated = True
+                
+        if not updated:
+            return {"status": "error", "message": "No 'image:' key found in the file."}
+            
+        with open(file_path, 'w') as f:
+            f.writelines(lines)
+            
+        return {"status": "success", "message": f"Successfully updated image in {file_path}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def git_commit_and_push(work_dir: str, commit_message: str) -> dict:
+    """Commits all changes and pushes to the remote repository.
+    
+    Args:
+        work_dir: Path to the git repository directory.
+        commit_message: The commit message to use.
+    """
+    try:
+        subprocess.run(["git", "add", "."], cwd=work_dir, capture_output=True)
+        res_commit = subprocess.run(["git", "commit", "-m", commit_message], cwd=work_dir, capture_output=True, text=True)
+        if "nothing to commit" in res_commit.stdout:
+            return {"status": "success", "message": "No changes to commit."}
+            
+        res_push = subprocess.run(["git", "push"], cwd=work_dir, capture_output=True, text=True)
+        if res_push.returncode != 0:
+            return {"status": "error", "message": f"Failed to push: {res_push.stderr}"}
+            
+        return {"status": "success", "message": "Successfully committed and pushed changes."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 # ============================================================
 # OpenAI Tools Converter
 # ============================================================
@@ -321,7 +432,7 @@ def get_openai_tools(functions):
 # Fungsi utama untuk menjalankan Agent
 # ============================================================
 
-async def run_git_agent(repo_name: str, ref: str, org: str):
+async def run_git_agent(action: str, repo_name: str, org: str, action_kwargs: dict):
     """Menjalankan Git Manager AI Agent menggunakan LiteLLM / OpenAI."""
 
     full_repo = f"{org}/{repo_name}"
@@ -330,6 +441,12 @@ async def run_git_agent(repo_name: str, ref: str, org: str):
     instruction = dedent(f"""\
         Kamu adalah seorang Git Repository Manager yang ahli dalam mengelola repository GitHub.
 
+        Repository target: {full_repo} (Local directory: '{dest_dir}')
+    """)
+    
+    if action == "clone":
+        ref = action_kwargs.get("ref", "main")
+        instruction += dedent(f"""\
         TUGAS UTAMA: Clone repository {full_repo} dengan branch/tag '{ref}' (single-branch mode), lalu analisa strukturnya.
 
         Langkah-langkah WAJIB:
@@ -341,15 +458,58 @@ async def run_git_agent(repo_name: str, ref: str, org: str):
         3. Setelah clone berhasil atau folder sudah ada, gunakan tool git_status untuk melihat status repository di folder '{dest_dir}'.
         4. Gunakan tool list_directory untuk melihat isi folder '{dest_dir}'.
         5. Gunakan tool git_log dengan work_dir='{dest_dir}' dan count=5 untuk melihat 5 commit terakhir.
-        6. Berikan laporan lengkap berisi:
-           - Status clone (berhasil/sudah ada)
-           - Branch/tag aktif
-           - Struktur folder (daftar file/folder)
-           - 5 commit terakhir
-           - Ringkasan singkat tentang project berdasarkan file yang ada
+        6. Berikan laporan lengkap.
+        """)
+        user_message = f"Clone repository '{full_repo}' dengan branch/tag '{ref}' ke folder '{dest_dir}', lalu berikan laporan lengkap tentang repository tersebut."
+        
+    elif action == "create-branch":
+        existing_branch = action_kwargs.get("existing_branch")
+        new_branch = action_kwargs.get("new_branch")
+        instruction += dedent(f"""\
+        TUGAS UTAMA: Membuat branch baru bernama '{new_branch}' dari branch '{existing_branch}'.
 
-        PENTING: Kamu HARUS menyelesaikan SEMUA langkah dan memberikan laporan lengkap di akhir.
-    """)
+        Langkah-langkah WAJIB:
+        1. Cek apakah folder '{dest_dir}' sudah ada. Jika belum, lakukan git_clone terlebih dahulu dari branch '{existing_branch}'.
+        2. Gunakan tool git_create_branch dengan work_dir='{dest_dir}', existing_branch='{existing_branch}', new_branch='{new_branch}'.
+        3. Berikan laporan lengkap bahwa branch berhasil dibuat.
+        """)
+        user_message = f"Buat branch baru '{new_branch}' dari '{existing_branch}' pada repository '{full_repo}'."
+        
+    elif action == "pull-request":
+        source_branch = action_kwargs.get("source_branch")
+        dest_branch = action_kwargs.get("dest_branch")
+        delete_after_merge = action_kwargs.get("delete_after_merge", True)
+        
+        instruction += dedent(f"""\
+        TUGAS UTAMA: Membuat Pull Request dari branch '{source_branch}' menuju '{dest_branch}'.
+        
+        Langkah-langkah WAJIB:
+        1. Cek apakah folder '{dest_dir}' sudah ada. Jika belum, lakukan git_clone.
+        2. Gunakan tool git_create_pull_request dengan work_dir='{dest_dir}', source_branch='{source_branch}', dest_branch='{dest_branch}'.
+           Buat judul (title) dan deskripsi (body) yang rapi secara otomatis.
+        3. Jika Delete After Merge diaktifkan ({delete_after_merge}), jalankan tool run_shell_command dengan perintah `gh repo edit --delete-branch-on-merge` pada work_dir='{dest_dir}'.
+        4. Berikan laporan lengkap berisi URL Pull Request tersebut.
+        """)
+        user_message = f"Buat Pull Request dari '{source_branch}' ke '{dest_branch}' pada repository '{full_repo}'."
+        
+    elif action == "update-image":
+        ref = action_kwargs.get("ref", "main")
+        yaml_file = action_kwargs.get("yaml_file")
+        new_image = action_kwargs.get("new_image")
+        
+        instruction += dedent(f"""\
+        TUGAS UTAMA: Memperbarui versi image pada file YAML dan melakukan push.
+        
+        Langkah-langkah WAJIB:
+        1. Cek apakah folder '{dest_dir}' sudah ada. Jika belum, lakukan git_clone branch '{ref}'.
+        2. Gunakan tool update_yaml_image dengan file_path='{dest_dir}/{yaml_file}' dan new_image='{new_image}'.
+        3. Gunakan tool git_commit_and_push dengan work_dir='{dest_dir}' dan pesan commit 'Update image to {new_image}'.
+        4. Berikan laporan bahwa image berhasil diupdate.
+        """)
+        user_message = f"Update file '{yaml_file}' dengan image '{new_image}' di branch '{ref}' pada repository '{full_repo}'."
+    else:
+        instruction += "\nTUGAS UTAMA: Bantu user sesuai instruksi."
+        user_message = "Mulai tugas."
 
     available_functions = {
         "git_clone": git_clone,
@@ -360,7 +520,11 @@ async def run_git_agent(repo_name: str, ref: str, org: str):
         "git_tag_list": git_tag_list,
         "list_directory": list_directory,
         "read_file": read_file,
-        "run_shell_command": run_shell_command
+        "run_shell_command": run_shell_command,
+        "git_create_branch": git_create_branch,
+        "git_create_pull_request": git_create_pull_request,
+        "update_yaml_image": update_yaml_image,
+        "git_commit_and_push": git_commit_and_push
     }
     
     tools = get_openai_tools(list(available_functions.values()))
@@ -372,12 +536,25 @@ async def run_git_agent(repo_name: str, ref: str, org: str):
 
     messages = [
         {"role": "system", "content": instruction},
-        {"role": "user", "content": f"Clone repository '{full_repo}' dengan branch/tag '{ref}' ke folder '{dest_dir}', lalu berikan laporan lengkap tentang repository tersebut."}
+        {"role": "user", "content": user_message}
     ]
 
     print(f"📦 Repository : {full_repo}")
-    print(f"🌿 Branch/Tag : {ref}")
     print(f"📂 Dest Dir   : {dest_dir}")
+    print(f"⚡ Action     : {action}")
+    if action == "clone":
+        print(f"🌿 Branch/Tag : {action_kwargs.get('ref', 'main')}")
+    elif action == "create-branch":
+        print(f"🌿 Source     : {action_kwargs.get('existing_branch')}")
+        print(f"✨ New Branch : {action_kwargs.get('new_branch')}")
+    elif action == "pull-request":
+        print(f"🌿 Source     : {action_kwargs.get('source_branch')}")
+        print(f"🎯 Target     : {action_kwargs.get('dest_branch')}")
+    elif action == "update-image":
+        print(f"🌿 Branch     : {action_kwargs.get('ref')}")
+        print(f"📄 YAML File  : {action_kwargs.get('yaml_file')}")
+        print(f"📦 New Image  : {action_kwargs.get('new_image')}")
+
     print(f"🤖 Memulai Git Manager AI Agent (LiteLLM Gateway + {MODEL_NAME})...\n")
 
     max_turns = 15
@@ -438,25 +615,85 @@ async def run_git_agent(repo_name: str, ref: str, org: str):
 # ============================================================
 def main():
     repo_name = None
-    ref = "main"
+    org = DEFAULT_ORG
+    action = "clone"
+    action_kwargs = {}
 
-    if len(sys.argv) < 2:
-        print("❌ Error: Nama repository wajib diisi.")
-        print(f"\nUsage: python agent_git.py <repo_name> [branch/tag]")
-        print(f"\nContoh:")
-        print(f"  python agent_git.py gitops-k8s")
-        print(f"  python agent_git.py gitops-k8s develop")
-        print(f"  python agent_git.py crypner-be-digitoken-module v1.2.3")
-        print(f"\nDefault org: {DEFAULT_ORG}")
-        print(f"Default ref: main (single-branch)")
-        sys.exit(1)
-
-    repo_name = sys.argv[1]
-    if len(sys.argv) > 2:
-        ref = sys.argv[2]
+    if len(sys.argv) < 2 or sys.argv[1].lower() == "init":
+        print("🚀 Memulai mode interaktif...")
+        try:
+            print("\nPilih Aksi:")
+            print("1. Clone / Analyze Repository")
+            print("2. Create Branch")
+            print("3. Create Pull Request")
+            print("4. Update Image in YAML")
+            action_choice = input("Masukkan pilihan (1/2/3/4) [1]: ").strip()
+            
+            repo_input = input("Masukkan nama repository: ").strip()
+            if not repo_input:
+                print("❌ Error: Nama repository wajib diisi.")
+                sys.exit(1)
+            repo_name = repo_input
+                
+            org_input = input(f"Masukkan nama organisasi git [{DEFAULT_ORG}]: ").strip()
+            if org_input:
+                org = org_input
+                
+            if action_choice == "2":
+                action = "create-branch"
+                exist_b = input("Masukkan nama existing branch [main]: ").strip() or "main"
+                new_b = input("Masukkan nama branch baru yg akan dibuat: ").strip()
+                if not new_b:
+                    print("❌ Error: Nama branch baru wajib diisi.")
+                    sys.exit(1)
+                action_kwargs = {"existing_branch": exist_b, "new_branch": new_b}
+                
+            elif action_choice == "3":
+                action = "pull-request"
+                src_b = input("Masukkan nama source branch: ").strip()
+                if not src_b:
+                    print("❌ Error: Source branch wajib diisi.")
+                    sys.exit(1)
+                dst_b = input("Masukkan nama destination branch [main]: ").strip() or "main"
+                del_merge = input("Delete source branch after merge? (y/n) [y]: ").strip().lower()
+                action_kwargs = {
+                    "source_branch": src_b, 
+                    "dest_branch": dst_b,
+                    "delete_after_merge": del_merge != 'n'
+                }
+                
+            elif action_choice == "4":
+                action = "update-image"
+                ref_b = input("Masukkan nama branch [main]: ").strip() or "main"
+                yaml_f = input("Masukkan lokasi file YAML (misal: deployment.yaml): ").strip()
+                if not yaml_f:
+                    print("❌ Error: Lokasi file YAML wajib diisi.")
+                    sys.exit(1)
+                img = input("Masukkan nama image baru (misal: repo/app:v1.2.3): ").strip()
+                if not img:
+                    print("❌ Error: Nama image wajib diisi.")
+                    sys.exit(1)
+                action_kwargs = {
+                    "ref": ref_b,
+                    "yaml_file": yaml_f,
+                    "new_image": img
+                }
+                
+            else:
+                action = "clone"
+                ref_input = input("Masukkan nama branch/tag [main]: ").strip()
+                action_kwargs = {"ref": ref_input if ref_input else "main"}
+                
+        except EOFError:
+            print("\n❌ Error: Input dibatalkan.")
+            sys.exit(1)
+    else:
+        action = "clone"
+        repo_name = sys.argv[1]
+        action_kwargs = {"ref": sys.argv[2] if len(sys.argv) > 2 else "main"}
 
     try:
-        asyncio.run(run_git_agent(repo_name, ref, DEFAULT_ORG))
+        asyncio.run(run_git_agent(action, repo_name, org, action_kwargs))
     except KeyboardInterrupt:
         print("\n\n⚠️ Agent dihentikan oleh pengguna (Ctrl+C).")
     except Exception as e:
