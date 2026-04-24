@@ -69,7 +69,7 @@ services:
     image: curlimages/curl:latest
     container_name: litellm_ollama_pull
     command: >
-      sh -c "echo 'Menunggu Ollama siap...' && sleep 10 && curl -X POST http://ollama:11434/api/pull -d '{\"name\": \"gemma4\"}' && echo '\nSelesai!'"
+      sh -c "echo 'Menunggu Ollama siap...' && sleep 10 && curl -X POST http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5-coder:14b\"}' && echo '\nSelesai!'"
     depends_on:
       - ollama
 

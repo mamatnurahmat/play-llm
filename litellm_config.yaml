@@ -10,9 +10,9 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY
 
   # Ollama Models
-  - model_name: gemma4
+  - model_name: qwen2.5-coder-14b
     litellm_params:
-      model: ollama/gemma4:latest
+      model: ollama/qwen2.5-coder:14b
       api_base: http://ollama:11434
 
   # Anthropic Models
