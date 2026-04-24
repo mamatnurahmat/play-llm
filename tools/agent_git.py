@@ -685,6 +685,30 @@ async def run_git_agent(action: str, repo_name: str, org: str, action_kwargs: di
         4. Laporkan hasil.
         """)
         user_message = f"Update '{yaml_f}' dengan image '{new_img}' di branch '{ref}'."
+        
+    elif action == "quick-pr":
+        ns       = action_kwargs.get("namespace", "default")
+        deploy   = action_kwargs.get("deployment")
+        new_img  = action_kwargs.get("image")
+        
+        yaml_f   = f"manifest/production-qoinplus/{deploy}_deployment.yaml"
+        safe_img = new_img.replace(":", "-").replace("/", "-")
+        new_b    = f"{ns}-{deploy}-{safe_img}"
+        existing = "main"
+        
+        instruction += dedent(f"""\
+        TUGAS: Lakukan Quick PR untuk update image '{new_img}' pada deployment '{deploy}'.
+        Langkah:
+        1. Buat branch baru via scm_create_branch_api: org='{org}', repo='{repo_name}', existing_branch='{existing}', new_branch='{new_b}'.
+        2. Jika API gagal membuat branch, coba clone repo branch '{existing}' lalu git_create_branch_local ke '{new_b}'. Jika sukses via API, langsung clone branch '{new_b}'.
+        3. Clone repo (jika belum) via git_clone: repo_url='{clone_url}', dest_dir='{dest_dir}', branch='{new_b}', single_branch=true.
+        4. Panggil update_yaml_image: file_path='{dest_dir}/{yaml_f}', new_image='{new_img}'.
+        5. Panggil git_commit_and_push: work_dir='{dest_dir}', commit_message='chore: update {deploy} image to {new_img}'.
+        6. Panggil scm_create_pull_request_api: org='{org}', repo='{repo_name}', source_branch='{new_b}', dest_branch='{existing}', title='Update {deploy} image to {new_img}', body='Automated PR to update image for {deploy} in namespace {ns}'.
+        7. Laporkan hasil dan URL PR.
+        """)
+        user_message = f"Jalankan alur Quick PR untuk '{deploy}'."
+        
     else:
         instruction += "\nTUGAS: Bantu user sesuai instruksi."
         user_message = "Mulai tugas."
@@ -721,6 +745,8 @@ async def run_git_agent(action: str, repo_name: str, org: str, action_kwargs: di
     elif action == "create-branch": print(f"✨ New Branch : {action_kwargs.get('new_branch')}")
     elif action == "pull-request":  print(f"🔀 {action_kwargs.get('source_branch')} → {action_kwargs.get('dest_branch','main')}")
     elif action == "update-image":  print(f"🐳 New Image  : {action_kwargs.get('new_image')}")
+    elif action == "quick-pr":
+        print(f"🚀 Quick PR   : {action_kwargs.get('deployment')} → {action_kwargs.get('image')}")
     print(f"🤖 Memulai Git Manager AI Agent ({MODEL_NAME})...\n")
 
     final_report = ""
@@ -1197,7 +1223,7 @@ def run_server():
     )
 
     class AgentRequest(BaseModel):
-        action:        str                      = Field(..., description="clone | create-branch | pull-request | update-image")
+        action:        str                      = Field(..., description="clone | create-branch | pull-request | update-image | quick-pr")
         repo_name:     str                      = Field(..., description="Nama repository")
         org:           Optional[str]            = Field(DEFAULT_ORG, description="Organisasi / project")
         action_kwargs: Optional[Dict[str, Any]] = Field(default={}, description="Parameter ekstra per aksi")
@@ -1219,6 +1245,10 @@ def run_server():
         "Update Image": {"summary": "Update Image", "value": {
             "action": "update-image", "repo_name": "gitops-k8s", "org": DEFAULT_ORG,
             "action_kwargs": {"ref": "main", "yaml_file": "deployment.yaml", "new_image": "app:v2.0.0"}
+        }},
+        "Quick PR": {"summary": "Quick PR", "value": {
+            "action": "quick-pr", "repo_name": "gitops", "org": DEFAULT_ORG,
+            "action_kwargs": {"namespace": "default", "deployment": "qoinplus-api", "image": "registry/qoinplus-api:v1.2.3"}
         }},
     })):
         try:
@@ -1264,11 +1294,15 @@ def main():
             print("  2. Create Branch (via API)")
             print("  3. Create Pull/Merge Request (via API)")
             print("  4. Update Image in YAML")
-            choice = input("Pilihan (1/2/3/4) [1]: ").strip() or "1"
+            print("  5. Quick PR (Update Image -> PR)")
+            choice = input("Pilihan (1/2/3/4/5) [1]: ").strip() or "1"
 
-            repo_name = input("Nama repository: ").strip()
-            if not repo_name:
-                print("❌ Nama repository wajib diisi."); sys.exit(1)
+            if choice == "5":
+                repo_name = input("Nama repository [gitops]: ").strip() or "gitops"
+            else:
+                repo_name = input("Nama repository: ").strip()
+                if not repo_name:
+                    print("❌ Nama repository wajib diisi."); sys.exit(1)
 
             org_in = input(f"Organisasi [{DEFAULT_ORG}]: ").strip()
             if org_in: org = org_in
@@ -1295,6 +1329,15 @@ def main():
                 img     = input("Image baru (misal: app:v2.0.0): ").strip()
                 if not img: print("❌ Image wajib."); sys.exit(1)
                 action_kwargs = {"ref": ref_b, "yaml_file": yaml_f, "new_image": img}
+
+            elif choice == "5":
+                action = "quick-pr"
+                ns     = input("Namespace [default]: ").strip() or "default"
+                dep    = input("Nama Deployment: ").strip()
+                if not dep: print("❌ Nama deployment wajib."); sys.exit(1)
+                img    = input("Image baru (misal: app:v1.2.3): ").strip()
+                if not img: print("❌ Image wajib."); sys.exit(1)
+                action_kwargs = {"namespace": ns, "deployment": dep, "image": img}
 
             else:
                 action        = "clone"
