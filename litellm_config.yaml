@@ -9,6 +9,12 @@ model_list:
       model: gemini/gemini-2.5-flash
       api_key: os.environ/GEMINI_API_KEY
 
+  # Ollama Models
+  - model_name: gemma4
+    litellm_params:
+      model: ollama/gemma4:latest
+      api_base: http://ollama:11434
+
   # Anthropic Models
   # - model_name: claude-3-5-sonnet
   #   litellm_params:

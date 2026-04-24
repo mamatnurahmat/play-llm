@@ -56,5 +56,37 @@ services:
   #     - litellm
   #   restart: always
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: litellm_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: always
+
+  ollama_pull_model:
+    image: curlimages/curl:latest
+    container_name: litellm_ollama_pull
+    command: >
+      sh -c "echo 'Menunggu Ollama siap...' && sleep 10 && curl -X POST http://ollama:11434/api/pull -d '{\"name\": \"gemma4\"}' && echo '\nSelesai!'"
+    depends_on:
+      - ollama
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: litellm_open_webui
+    ports:
+      - "3000:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    volumes:
+      - open-webui_data:/app/backend/data
+    depends_on:
+      - ollama
+    restart: always
+
 volumes:
   postgres_data:
+  ollama_data:
+  open-webui_data:
