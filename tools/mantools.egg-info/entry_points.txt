@@ -1,0 +1,2 @@
+[console_scripts]
+mantools = agents.cli:main

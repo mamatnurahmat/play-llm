@@ -85,6 +85,7 @@ class BaseAgent(ABC):
         print(f"📦 Repository : {self.full_repo}")
         print(f"🔌 SCM        : {self.cfg.scm_provider.upper()}  ({self.cfg.scm_base_url})")
         print(f"📂 Dest Dir   : {self.dest_dir}")
+        print(f"🧠 LLM Mode   : {self.cfg.llm_mode_display}")
         print(f"⚡ Agent      : {self.name}")
 
     # ----------------------------------------------------------------
@@ -121,8 +122,8 @@ class BaseAgent(ABC):
         user_message = self.build_user_message()
 
         client = AsyncOpenAI(
-            api_key=self.cfg.litellm_master_key,
-            base_url=self.cfg.litellm_base_url,
+            api_key=self.cfg.effective_api_key,
+            base_url=self.cfg.effective_base_url,
         )
         messages = [
             {"role": "system", "content": instruction},

@@ -99,10 +99,17 @@ class HealthChecker:
             "SCM_PROVIDER":       (self.cfg.scm_provider,       "github | gitlab | bitbucket_cloud | bitbucket_server"),
             "SCM_ORG":            (self.cfg.scm_org,            "nama organisasi / project / workspace"),
             "SCM_TOKEN":          (self.cfg.scm_token,          "Personal Access Token / App Password"),
-            "LITELLM_BASE_URL":   (self.cfg.litellm_base_url,   "base URL gateway LiteLLM"),
-            "LITELLM_MASTER_KEY": (self.cfg.litellm_master_key, "master key LiteLLM"),
             "MODEL_NAME":         (self.cfg.model_name,         "nama model AI yang digunakan"),
         }
+
+        # LLM config depends on mode
+        if self.cfg.is_direct_mode:
+            required_env["LLM_PROVIDER"] = (self.cfg.llm_provider, "gemini | openai | anthropic | ollama")
+            if self.cfg.llm_provider != "ollama":
+                required_env["LLM_API_KEY"] = (self.cfg.llm_api_key, "API key untuk provider LLM")
+        else:
+            required_env["LITELLM_BASE_URL"]   = (self.cfg.litellm_base_url,   "base URL gateway LiteLLM")
+            required_env["LITELLM_MASTER_KEY"] = (self.cfg.litellm_master_key, "master key LiteLLM")
         for var, (val, desc) in required_env.items():
             if val and val not in ("MyOrg",):
                 if "TOKEN" in var or "KEY" in var:
@@ -268,6 +275,66 @@ class HealthChecker:
             self._rec(sec, "API connectivity", self.FAIL, f"Provider '{p}' tidak dikenali")
 
     def _check_llm_gateway(self):
+        if self.cfg.is_direct_mode:
+            return self._check_llm_direct()
+        return self._check_llm_litellm()
+
+    def _check_llm_direct(self):
+        """Check direct LLM provider connectivity."""
+        sec = f"LLM Direct ({self.cfg.llm_provider.upper()})"
+        base = self.cfg.effective_base_url
+        api_key = self.cfg.effective_api_key
+        model = self.cfg.model_name
+
+        self._rec(sec, "LLM Mode", self.INFO, f"Direct → {self.cfg.llm_provider.upper()}")
+        self._rec(sec, "Base URL", self.INFO, base)
+
+        if not api_key and self.cfg.llm_provider != "ollama":
+            self._rec(sec, "API Key", self.FAIL, "API key kosong — set LLM_API_KEY atau variable provider-specific")
+            return
+        elif self.cfg.llm_provider == "ollama":
+            self._rec(sec, "API Key", self.INFO, "Tidak diperlukan (Ollama lokal)")
+        else:
+            display = f"{api_key[:4]}{'*' * max(0, len(api_key) - 8)}{api_key[-4:]}" if len(api_key) > 8 else "****"
+            self._rec(sec, "API Key", self.OK, display)
+
+        # Liveness test
+        try:
+            llm_url = base.rstrip("/") + "/chat/completions"
+            payload = json.dumps({
+                "model": model,
+                "max_tokens": 8,
+                "messages": [{"role": "user", "content": "reply: OK"}]
+            }).encode()
+            req = urllib.request.Request(
+                llm_url, data=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                raw = r.read().decode()
+                data = json.loads(raw)
+                reply = data.get("choices", [{}])[0].get("message", {}).get("content") or ""
+                reply = reply.strip()
+                self._rec(sec, "LLM liveness test", self.OK, f'Model merespons: "{reply[:60]}"')
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode()
+            try:
+                body = json.loads(raw)
+                msg = body.get("error", {}).get("message", raw[:150]) if isinstance(body, dict) else raw[:150]
+            except Exception:
+                msg = raw[:150]
+            self._rec(sec, "LLM liveness test", self.FAIL, f"HTTP {e.code}: {msg}")
+        except urllib.error.URLError as e:
+            self._rec(sec, "LLM liveness test", self.FAIL, f"Koneksi gagal: {e.reason}")
+        except Exception as e:
+            self._rec(sec, "LLM liveness test", self.FAIL, str(e))
+
+    def _check_llm_litellm(self):
+        """Check LiteLLM gateway connectivity (original behavior)."""
         sec = "LiteLLM / AI Gateway"
 
         # Health endpoint
