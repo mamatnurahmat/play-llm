@@ -9,6 +9,24 @@ model_list:
       model: gemini/gemini-2.5-flash
       api_key: os.environ/GEMINI_API_KEY
 
+  # NVIDIA NIM (Free Endpoints)
+  - model_name: glm4.7
+    litellm_params:
+      model: nvidia_nim/z-ai/glm4.7
+      api_key: os.environ/NVIDIA_API_KEY
+  - model_name: llama-3.1-70b
+    litellm_params:
+      model: nvidia_nim/meta/llama-3.1-70b-instruct
+      api_key: os.environ/NVIDIA_API_KEY
+  - model_name: llama-3.1-8b
+    litellm_params:
+      model: nvidia_nim/meta/llama-3.1-8b-instruct
+      api_key: os.environ/NVIDIA_API_KEY
+  - model_name: mixtral-8x7b
+    litellm_params:
+      model: nvidia_nim/mistralai/mixtral-8x7b-instruct-v0.1
+      api_key: os.environ/NVIDIA_API_KEY
+
   # Anthropic Models
   # - model_name: claude-3-5-sonnet
   #   litellm_params:

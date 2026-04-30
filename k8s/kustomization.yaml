@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: litellm-gateway
+
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+
+configMapGenerator:
+  - name: litellm-config
+    files:
+      - litellm_config.yaml=../litellm_config.yaml
+
+secretGenerator:
+  - name: litellm-secret
+    envs:
+      - ../.env
+
+generatorOptions:
+  disableNameSuffixHash: true
