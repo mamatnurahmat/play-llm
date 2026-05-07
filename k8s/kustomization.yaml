@@ -8,15 +8,19 @@ resources:
   - deployment.yaml
   - service.yaml
 
+# Mount litellm_config.yaml sebagai ConfigMap
+# setara: volumes: - ./litellm_config.yaml:/app/config.yaml di docker-compose
 configMapGenerator:
   - name: litellm-config
     files:
-      - litellm_config.yaml=../litellm_config.yaml
+      - litellm_config.yaml=litellm_config.yaml  # copy dari root, update jika config berubah
 
+# Secret dari .env.k8s (file bersih tanpa comment)
+# setara: environment: section di docker-compose
 secretGenerator:
   - name: litellm-secret
     envs:
-      - ../.env
+      - .env.k8s
 
 generatorOptions:
   disableNameSuffixHash: true

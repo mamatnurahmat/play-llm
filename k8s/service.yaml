@@ -7,8 +7,10 @@ metadata:
 spec:
   selector:
     app: litellm
+  type: NodePort
   ports:
-    - protocol: TCP
-      port: 4000
-      targetPort: 4000
-  type: ClusterIP
+    - name: http
+      protocol: TCP
+      port: 4000        # ClusterIP port (internal)
+      targetPort: 4000  # container port
+      nodePort: 8888    # akses eksternal: http://<node-ip>:8888

@@ -18,21 +18,49 @@ spec:
         - name: litellm
           image: ghcr.io/berriai/litellm:main-latest
           imagePullPolicy: Always
-          command:
+          # Setara: command: ["--config", "/app/config.yaml", "--port", "4000"]
+          # di docker-compose
+          args:
             - "--config"
             - "/app/config.yaml"
             - "--port"
             - "4000"
           ports:
             - containerPort: 4000
+          # Inject semua env vars dari Secret (DATABASE_URL, LITELLM_MASTER_KEY,
+          # GEMINI_API_KEY, NVIDIA_API_KEY) — setara environment: section di docker-compose
           envFrom:
             - secretRef:
                 name: litellm-secret
           volumeMounts:
             - name: config-volume
               mountPath: /app/config.yaml
-              subPath: litellm_config.yaml
+              subPath: litellm_config.yaml   # setara volume mount di docker-compose
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: 4000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: 4000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
       volumes:
         - name: config-volume
           configMap:
             name: litellm-config
+      # setara restart: always di docker-compose
+      restartPolicy: Always
